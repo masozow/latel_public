@@ -47,9 +47,9 @@ import VentaHasFormaPago from "./ventaHasFormaPago.model.js";
   Producto.belongsTo(TipoProducto, { foreignKey: { name: "tipoProductoId", allowNull: false }, as: "tipoProducto" });
   TipoProducto.hasMany(Producto, { foreignKey: { name: "tipoProductoId", allowNull: false }, as: "productos" });
 
-  // Producto → LineaProducto (NULL permitido)
-  Producto.belongsTo(LineaProducto, { foreignKey: { name: "lineaProductoId", allowNull: true }, as: "lineaProducto" });
-  LineaProducto.hasMany(Producto, { foreignKey: { name: "lineaProductoId", allowNull: true }, as: "productosLinea" });
+  // Producto → Marca (NULL permitido)
+  Producto.belongsTo(Marca, { foreignKey: { name: "marcaId", allowNull: true }, as: "marca" });
+  Marca.hasMany(Producto, { foreignKey: { name: "marcaId", allowNull: true }, as: "productosMarca" });
 
   // Producto → PrecioProducto (NULL permitido)
   Producto.belongsTo(PrecioProducto, { foreignKey: { name: "precioPorDefectoId", allowNull: true }, as: "precioPorDefecto" });

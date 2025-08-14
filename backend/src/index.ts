@@ -5,8 +5,8 @@ import cookieParser from "cookie-parser";
 // import bodyParser from "body-parser";
 
 //----------- For database updates--------
-// import sequelize from "./config/sequelize.js";
-// import "./models/index.js";
+import sequelize from "./config/sequelize.js";
+import "./models/index.js";
 
 
 // Routes
@@ -34,7 +34,7 @@ app.use(express.json());
 app.use(cookieParser(process.env.JWT_SECRET)); // to sign cookies
 
 // Sync database (development mode)
-// await sequelize.sync({ alter: true }); //uncomment only when changes are needed in DB
+await sequelize.sync({ alter: true }); //uncomment only when changes are needed in DB
 
 // Routes
 app.use("/api", estadoRoutes);
