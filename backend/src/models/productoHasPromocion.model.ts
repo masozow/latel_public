@@ -1,13 +1,6 @@
-import {
-  DataTypes,
-  Model,
-} from "sequelize";
+import { DataTypes, Model } from "sequelize";
 import sequelize from "../config/sequelize.js";
-
-export interface ProductoHasPromocionAttributes {
-  productoId: number;
-  promocionId: number;
-}
+import { ProductoHasPromocionAttributes } from "../schemas/productoHasPromocion.schema.js";
 
 class ProductoHasPromocion
   extends Model<ProductoHasPromocionAttributes>
@@ -17,27 +10,26 @@ class ProductoHasPromocion
   declare promocionId: number;
 }
 
-
-  ProductoHasPromocion.init(
-    {
-      productoId: {
-        type: DataTypes.INTEGER.UNSIGNED,
-        allowNull: false,
-        primaryKey: true,
-        field: "Producto_Id",
-      },
-      promocionId: {
-        type: DataTypes.INTEGER.UNSIGNED,
-        allowNull: false,
-        primaryKey: true,
-        field: "Promocion_Id",
-      },
+ProductoHasPromocion.init(
+  {
+    productoId: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: false,
+      primaryKey: true,
+      field: "Producto_Id",
     },
-    {
-      sequelize,
-      tableName: "Producto_has_Promocion",
-      timestamps: false,
-    }
-  );
+    promocionId: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: false,
+      primaryKey: true,
+      field: "Promocion_Id",
+    },
+  },
+  {
+    sequelize,
+    tableName: "Producto_has_Promocion",
+    timestamps: false,
+  }
+);
 
 export default ProductoHasPromocion;

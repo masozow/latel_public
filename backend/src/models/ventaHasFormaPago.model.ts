@@ -1,25 +1,6 @@
-import {
-  DataTypes,
-  Model,
-  Optional,
-} from "sequelize";
+import { DataTypes, Model } from "sequelize";
 import sequelize from "../config/sequelize.js";
-
-export interface VentaHasFormaPagoAttributes {
-  id: bigint;
-  ventaId: number;
-  formaPagoId: number;
-  montoFormaPagoVenta: number;
-  comprobantePagoId?: bigint | null;
-  createdAt?: Date;
-  updatedAt?: Date;
-}
-
-export interface VentaHasFormaPagoCreationAttributes
-  extends Optional<
-    VentaHasFormaPagoAttributes,
-    "id"  | "comprobantePagoId" | "createdAt" | "updatedAt"
-  > {}
+import { VentaHasFormaPagoAttributes, VentaHasFormaPagoCreationAttributes } from "../schemas/ventaHasFormaPago.schema.js";
 
 class VentaHasFormaPago
   extends Model<VentaHasFormaPagoAttributes, VentaHasFormaPagoCreationAttributes>
@@ -34,52 +15,50 @@ class VentaHasFormaPago
   declare readonly updatedAt: Date;
 }
 
-
-  VentaHasFormaPago.init(
-    {
-      id: {
-        type: DataTypes.BIGINT.UNSIGNED,
-        autoIncrement: true,
-        primaryKey: true,
-        field: "Id",
-      },
-      ventaId: {
-        type: DataTypes.INTEGER.UNSIGNED,
-        allowNull: false,
-        field: "Venta_Id",
-      },
-      formaPagoId: {
-        type: DataTypes.INTEGER.UNSIGNED,
-        allowNull: false,
-        field: "FormaPago_Id",
-      },
-      montoFormaPagoVenta: {
-        type: DataTypes.DECIMAL,
-        allowNull: false,
-        field: "MontoFormaPagoVenta",
-      },
-      comprobantePagoId: {
-        type: DataTypes.BIGINT.UNSIGNED,
-        allowNull: true,
-        field: "ComprobantePago_Id",
-      },
-      createdAt: {
-        type: DataTypes.DATE,
-        allowNull: true,
-        field: "createdAt",
-      },
-      updatedAt: {
-        type: DataTypes.DATE,
-        allowNull: true,
-        field: "updatedAt",
-      },
+VentaHasFormaPago.init(
+  {
+    id: {
+      type: DataTypes.BIGINT.UNSIGNED,
+      autoIncrement: true,
+      primaryKey: true,
+      field: "Id",
     },
-    {
-      sequelize,
-      tableName: "Venta_has_FormaPago",
-      timestamps: true,
-    }
-  );
-
+    ventaId: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: false,
+      field: "Venta_Id",
+    },
+    formaPagoId: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: false,
+      field: "FormaPago_Id",
+    },
+    montoFormaPagoVenta: {
+      type: DataTypes.DECIMAL,
+      allowNull: false,
+      field: "MontoFormaPagoVenta",
+    },
+    comprobantePagoId: {
+      type: DataTypes.BIGINT.UNSIGNED,
+      allowNull: true,
+      field: "ComprobantePago_Id",
+    },
+    createdAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: "createdAt",
+    },
+    updatedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: "updatedAt",
+    },
+  },
+  {
+    sequelize,
+    tableName: "Venta_has_FormaPago",
+    timestamps: true,
+  }
+);
 
 export default VentaHasFormaPago;

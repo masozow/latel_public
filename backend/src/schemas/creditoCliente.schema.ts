@@ -3,7 +3,7 @@ import {z} from "zod";
 export const CreditoClienteSchema = z.object({
   id: z.number().int().positive().optional(),
   clienteId: z.number().int().positive(),
-  ventaId: z.number().int().positive().optional().nullable(),
+  ventaId: z.number().int().positive(),
   fechaLimiteCreditoCliente: z.date(),
   cantidadCuotasCreditoCliente: z.number().int().positive().optional().nullable(),
   montoCreditoCliente: z.number().positive(),

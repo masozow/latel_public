@@ -1,29 +1,9 @@
-import {
-  DataTypes,
-  Model,
-  Optional,
-} from "sequelize";
+import { DataTypes, Model } from "sequelize";
 import sequelize from "../config/sequelize.js";
-
-export interface TrasladoProductoBodegaAttributes {
-  id: number;
-  usuarioAutoriza: number;
-  usuarioEncargado: number;
-  createdAt?: Date;
-  updatedAt?: Date;
-}
-
-export interface TrasladoProductoBodegaCreationAttributes
-  extends Optional<
-    TrasladoProductoBodegaAttributes,
-    "id" | "createdAt" | "updatedAt"
-  > {}
+import { TrasladoProductoBodegaAttributes, TrasladoProductoBodegaCreationAttributes } from "../schemas/trasladoProductoBodega.schema.js";
 
 class TrasladoProductoBodega
-  extends Model<
-    TrasladoProductoBodegaAttributes,
-    TrasladoProductoBodegaCreationAttributes
-  >
+  extends Model<TrasladoProductoBodegaAttributes, TrasladoProductoBodegaCreationAttributes>
   implements TrasladoProductoBodegaAttributes
 {
   declare id: number;
@@ -33,41 +13,40 @@ class TrasladoProductoBodega
   declare readonly updatedAt: Date;
 }
 
-
-  TrasladoProductoBodega.init(
-    {
-      id: {
-        type: DataTypes.INTEGER.UNSIGNED,
-        autoIncrement: true,
-        primaryKey: true,
-        field: "Id",
-      },
-      usuarioAutoriza: {
-        type: DataTypes.INTEGER.UNSIGNED,
-        allowNull: false,
-        field: "UsuarioAutoriza",
-      },
-      usuarioEncargado: {
-        type: DataTypes.INTEGER.UNSIGNED,
-        allowNull: false,
-        field: "UsuarioEncargado",
-      },
-      createdAt: {
-        type: DataTypes.DATE,
-        allowNull: true,
-        field: "createdAt",
-      },
-      updatedAt: {
-        type: DataTypes.DATE,
-        allowNull: true,
-        field: "updatedAt",
-      },
+TrasladoProductoBodega.init(
+  {
+    id: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      autoIncrement: true,
+      primaryKey: true,
+      field: "Id",
     },
-    {
-      sequelize,
-      tableName: "TrasladoProductoBodega",
-      timestamps: true,
-    }
-  );
+    usuarioAutoriza: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: false,
+      field: "UsuarioAutoriza",
+    },
+    usuarioEncargado: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: false,
+      field: "UsuarioEncargado",
+    },
+    createdAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: "createdAt",
+    },
+    updatedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: "updatedAt",
+    },
+  },
+  {
+    sequelize,
+    tableName: "TrasladoProductoBodega",
+    timestamps: true,
+  }
+);
 
 export default TrasladoProductoBodega;

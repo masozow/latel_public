@@ -1,36 +1,6 @@
-import {
-  DataTypes,
-  Model,
-  Optional,
-} from "sequelize";
+import { DataTypes, Model } from "sequelize";
 import sequelize from "../config/sequelize.js";
-
-export interface ProductoAttributes {
-  id: number;
-  codigoProducto: string;
-  descripcionProducto: string;
-  anotacionProducto?:string|null; 
-  costoProducto: number;
-  totalExistenciaProducto:number;
-  estadoId: number;
-  marcaId: number;
-  tipoProductoId: number;
-  lineaProductoId?: number | null;
-  precioPorDefectoId?: number | null;
-  createdAt?: Date;
-  updatedAt?: Date;
-}
-
-export interface ProductoCreationAttributes
-  extends Optional<
-    ProductoAttributes,
-    | "id"
-    | "lineaProductoId"
-    | "anotacionProducto"
-    | "precioPorDefectoId"
-    | "createdAt"
-    | "updatedAt"
-  > {}
+import { ProductoAttributes, ProductoCreationAttributes } from "../schemas/producto.schema.js";
 
 class Producto
   extends Model<ProductoAttributes, ProductoCreationAttributes>
@@ -39,9 +9,9 @@ class Producto
   declare id: number;
   declare codigoProducto: string;
   declare descripcionProducto: string;
-  declare anotacionProducto?:string|null;
+  declare anotacionProducto?: string | null; 
   declare costoProducto: number;
-  declare totalExistenciaProducto:number;
+  declare totalExistenciaProducto: number;
   declare estadoId: number;
   declare marcaId: number;
   declare tipoProductoId: number;
@@ -61,13 +31,13 @@ Producto.init(
     },
     codigoProducto: {
       type: DataTypes.STRING,
-      allowNull: true,
+      allowNull: false,
       unique: true,
       field: "CodigoProducto",
     },
     descripcionProducto: {
       type: DataTypes.STRING,
-      allowNull: true,
+      allowNull: false,
       field: "DescripcionProducto",
     },
     anotacionProducto: {
@@ -77,7 +47,7 @@ Producto.init(
     },
     costoProducto: {
       type: DataTypes.DECIMAL,
-      allowNull: true,
+      allowNull: false,
       field: "CostoProducto",
     },
     totalExistenciaProducto: {

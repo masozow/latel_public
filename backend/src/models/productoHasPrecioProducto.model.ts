@@ -1,31 +1,9 @@
-import {
-  DataTypes,
-  Model,
-  Optional,
-} from "sequelize";
+import { DataTypes, Model } from "sequelize";
 import sequelize from "../config/sequelize.js";
-
-export interface ProductoHasPrecioProductoAttributes {
-  id: bigint;
-  productoId: number;
-  precioProductoId: number;
-  montoPrecioProducto: number;
-  estadoId: number;
-  createdAt?: Date;
-  updatedAt?: Date;
-}
-
-export interface ProductoHasPrecioProductoCreationAttributes
-  extends Optional<
-    ProductoHasPrecioProductoAttributes,
-    "id" | "createdAt" | "updatedAt"
-  > {}
+import { ProductoHasPrecioProductoAttributes, ProductoHasPrecioProductoCreationAttributes } from "../schemas/productoHasPrecio.schema.js";
 
 class ProductoHasPrecioProducto
-  extends Model<
-    ProductoHasPrecioProductoAttributes,
-    ProductoHasPrecioProductoCreationAttributes
-  >
+  extends Model<ProductoHasPrecioProductoAttributes, ProductoHasPrecioProductoCreationAttributes>
   implements ProductoHasPrecioProductoAttributes
 {
   declare id: bigint;
@@ -36,8 +14,6 @@ class ProductoHasPrecioProducto
   declare readonly createdAt: Date;
   declare readonly updatedAt: Date;
 }
-
-
   ProductoHasPrecioProducto.init(
     {
       id: {
