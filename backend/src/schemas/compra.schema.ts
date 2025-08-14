@@ -5,8 +5,8 @@ export const CompraSchema = z.object({
   proveedorId: z.number().int().positive(),
   fechaCompra: z.date(),
   totalCompra: z.number().positive(),
-  numeroDocumentoCompra: z.number().optional().nullable(),
-  serieDocumentoCompra: z.number().optional().nullable(),
+  numeroDocumentoCompra: z.string().optional().nullable(),  // Cambiado a string
+  serieDocumentoCompra: z.string().optional().nullable(),   // Cambiado a string
   pagaIVA: z.boolean(),
   compraContadoOCredito: z.boolean(),
   estadoId: z.number().int().positive(),

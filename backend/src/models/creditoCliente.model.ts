@@ -8,7 +8,7 @@ import sequelize from "../config/sequelize.js";
 export interface CreditoClienteAttributes {
   id: number;
   clienteId: number;
-  ventaId?: number | null;
+  ventaId: number;
   fechaLimiteCreditoCliente: Date;
   cantidadCuotasCreditoCliente?: number | null;
   montoCreditoCliente: number;
@@ -21,7 +21,6 @@ export interface CreditoClienteCreationAttributes
   extends Optional<
     CreditoClienteAttributes,
     | "id"
-    | "ventaId"
     | "cantidadCuotasCreditoCliente"
     | "createdAt"
     | "updatedAt"
@@ -33,7 +32,7 @@ class CreditoCliente
 {
   declare id: number;
   declare clienteId: number;
-  declare ventaId?: number | null;
+  declare ventaId: number;
   declare fechaLimiteCreditoCliente: Date;
   declare cantidadCuotasCreditoCliente?: number|null;
   declare montoCreditoCliente: number;
@@ -60,6 +59,11 @@ class CreditoCliente
         type: DataTypes.DATE,
         allowNull: true,
         field: "FechaLimiteCreditoCliente",
+      },
+      ventaId: {
+        type: DataTypes.INTEGER.UNSIGNED,
+        allowNull: false,
+        field: "Venta_Id",
       },
       montoCreditoCliente: {
         type: DataTypes.DECIMAL,
