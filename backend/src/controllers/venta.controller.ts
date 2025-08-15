@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { Venta, Cliente, Entidad, TipoCliente, Estado, DetalleVenta, Producto, VentaHasFormaPago, FormaPago } from "../models/index.js";
+import { Venta, Cliente, Entidad, TipoCliente, Estado, DetalleVenta, Producto, VentaHasFormaPago, FormaPago, BodegaHasProducto, Bodega } from "../models/index.js";
 import { errorAndLogHandler, errorLevels } from "../utils/errorHandler.js";
 import { VentaSchema } from "../schemas/venta.schema.js";
 import sequelize from "../config/sequelize.js";
@@ -36,8 +36,28 @@ const create = async (req: Request, res: Response) => {
         if (!producto) {
           throw new Error(`Producto con ID ${detalle.productoId} no encontrado`);
         }
+
+        // Verificar existencia en la bodega específica
+        const bodegaProducto = await BodegaHasProducto.findOne({
+          where: { 
+            productoId: detalle.productoId, 
+            bodegaId: ventaData.bodegaId 
+          },
+          transaction: t
+        });
+
+        if (!bodegaProducto) {
+          throw new Error(`Producto ${producto.descripcionProducto} no encontrado en la bodega especificada`);
+        }
+
+        const existenciaEnBodega = bodegaProducto.existencia || 0;
+        if (existenciaEnBodega < detalle.cantidadVenta) {
+          throw new Error(`Stock insuficiente en bodega para el producto ${producto.descripcionProducto}. Disponible: ${existenciaEnBodega}, Solicitado: ${detalle.cantidadVenta}`);
+        }
+
+        // Verificar también existencia total (por seguridad)
         if (producto.totalExistenciaProducto < detalle.cantidadVenta) {
-          throw new Error(`Stock insuficiente para el producto ${producto.descripcionProducto}. Disponible: ${producto.totalExistenciaProducto}, Solicitado: ${detalle.productoId}`);
+          throw new Error(`Stock insuficiente total para el producto ${producto.descripcionProducto}. Disponible: ${producto.totalExistenciaProducto}, Solicitado: ${detalle.cantidadVenta}`);
         }
       }
 
@@ -48,6 +68,17 @@ const create = async (req: Request, res: Response) => {
 
       // Reducir existencias de productos
       for (const detalle of detallesVenta) {
+        // Reducir en BodegaHasProducto
+        await BodegaHasProducto.decrement('existencia', {
+          by: detalle.cantidadVenta,
+          where: { 
+            productoId: detalle.productoId,
+            bodegaId: ventaData.bodegaId 
+          },
+          transaction: t
+        });
+
+        // Reducir existencia total en Producto
         await Producto.decrement('totalExistenciaProducto', {
           by: detalle.cantidadVenta,
           where: { id: detalle.productoId },
@@ -89,125 +120,6 @@ const create = async (req: Request, res: Response) => {
   }
 };
 
-const getAll = async (req: Request, res: Response) => {
-  try {
-    const ventas = await Venta.findAll({
-      include: [
-        {
-          model: Cliente,
-          as: "cliente",
-          include: [
-            {
-              model: Entidad,
-              as: "entidad",
-            },
-            {
-              model: TipoCliente,
-              as: "tipoCliente",
-            },
-          ],
-        },
-        {
-          model: Estado,
-          as: "estado",
-        },
-        {
-          model: DetalleVenta,
-          as: "detallesVenta",
-          include: [
-            {
-              model: Producto,
-              as: "producto",
-            },
-          ],
-        },
-        {
-          model: VentaHasFormaPago,
-          as: "formasPagoVenta",
-          include: [
-            {
-              model: FormaPago,
-              as: "formaPago",
-            },
-          ],
-        },
-      ],
-      order: [["fechaVenta", "DESC"]],
-    });
-
-    return res.status(200).json({ success: ventas.length > 0, data: ventas });
-  } catch (error) {
-    res.status(500).json(
-      await errorAndLogHandler({
-        level: errorLevels.error,
-        message: `Error obteniendo ventas: ${(error as Error).message}`,
-        error,
-        userId: req.user?.id || 0,
-      })
-    );
-  }
-};
-
-const getByID = async (req: Request, res: Response) => {
-  const { id } = req.params;
-  try {
-    const venta = await Venta.findByPk(id, {
-      include: [
-        {
-          model: Cliente,
-          as: "cliente",
-          include: [
-            {
-              model: Entidad,
-              as: "entidad",
-            },
-            {
-              model: TipoCliente,
-              as: "tipoCliente",
-            },
-          ],
-        },
-        {
-          model: Estado,
-          as: "estado",
-        },
-        {
-          model: DetalleVenta,
-          as: "detallesVenta",
-          include: [
-            {
-              model: Producto,
-              as: "producto",
-            },
-          ],
-        },
-        {
-          model: VentaHasFormaPago,
-          as: "formasPagoVenta",
-          include: [
-            {
-              model: FormaPago,
-              as: "formaPago",
-            },
-          ],
-        },
-      ],
-    });
-
-    res.status(200).json({ success: venta !== null, data: venta });
-  } catch (error) {
-    res.status(500).json(
-      await errorAndLogHandler({
-        level: errorLevels.error,
-        message: `Error obteniendo la venta: ${id} ${(error as Error).message}`,
-        error,
-        userId: req.user?.id || 0,
-        genericId: id,
-      })
-    );
-  }
-};
-
 const update = async (req: Request, res: Response) => {
   const { id } = req.params;
   const userId = req.user?.id || 0;
@@ -215,6 +127,20 @@ const update = async (req: Request, res: Response) => {
 
   try {
     const { detallesVenta, formasPago, ...ventaData } = req.body;
+
+    // Obtener la venta actual para conocer la bodega original
+    const ventaActual = await Venta.findByPk(id);
+    if (!ventaActual) {
+      await t.rollback();
+      return res.status(404).json(
+        await errorAndLogHandler({
+          level: errorLevels.warn,
+          message: `Venta con ID ${id} no encontrada`,
+          userId,
+          genericId: id,
+        })
+      );
+    }
 
     // Validación Zod de los datos de la venta
     const parseResult = VentaSchema.omit({ id: true, createdAt: true, updatedAt: true }).safeParse(ventaData);
@@ -250,6 +176,17 @@ const update = async (req: Request, res: Response) => {
       // Primero restaurar las existencias de los detalles antiguos
       const detallesAntiguos = await DetalleVenta.findAll({ where: { ventaId: id } });
       for (const detalle of detallesAntiguos) {
+        // Restaurar en BodegaHasProducto (usar bodega original)
+        await BodegaHasProducto.increment('existencia', {
+          by: detalle.cantidadVenta,
+          where: { 
+            productoId: detalle.productoId,
+            bodegaId: ventaActual.bodegaId 
+          },
+          transaction: t
+        });
+
+        // Restaurar existencia total en Producto
         await Producto.increment('totalExistenciaProducto', {
           by: detalle.cantidadVenta,
           where: { id: detalle.productoId },
@@ -260,14 +197,29 @@ const update = async (req: Request, res: Response) => {
       // Eliminar detalles antiguos
       await DetalleVenta.destroy({ where: { ventaId: id }, transaction: t });
 
-      // Verificar existencias para los nuevos detalles
+      // Verificar existencias para los nuevos detalles en la nueva bodega
+      const nuevaBodegaId = ventaData.bodegaId || ventaActual.bodegaId;
       for (const detalle of detallesVenta) {
         const producto = await Producto.findByPk(detalle.productoId);
         if (!producto) {
           throw new Error(`Producto con ID ${detalle.productoId} no encontrado`);
         }
-        if (producto.totalExistenciaProducto < detalle.cantidadVenta) {
-          throw new Error(`Stock insuficiente para el producto ${producto.descripcionProducto}. Disponible: ${producto.totalExistenciaProducto}, Solicitado: ${detalle.cantidadVenta}`);
+
+        const bodegaProducto = await BodegaHasProducto.findOne({
+          where: { 
+            productoId: detalle.productoId, 
+            bodegaId: nuevaBodegaId 
+          },
+          transaction: t
+        });
+
+        if (!bodegaProducto) {
+          throw new Error(`Producto ${producto.descripcionProducto} no encontrado en la bodega especificada`);
+        }
+
+        const existenciaEnBodega = bodegaProducto.existencia || 0;
+        if (existenciaEnBodega < detalle.cantidadVenta) {
+          throw new Error(`Stock insuficiente en bodega para el producto ${producto.descripcionProducto}. Disponible: ${existenciaEnBodega}, Solicitado: ${detalle.cantidadVenta}`);
         }
       }
 
@@ -280,6 +232,17 @@ const update = async (req: Request, res: Response) => {
 
       // Reducir existencias con los nuevos detalles
       for (const detalle of detallesVenta) {
+        // Reducir en BodegaHasProducto
+        await BodegaHasProducto.decrement('existencia', {
+          by: detalle.cantidadVenta,
+          where: { 
+            productoId: detalle.productoId,
+            bodegaId: nuevaBodegaId 
+          },
+          transaction: t
+        });
+
+        // Reducir existencia total en Producto
         await Producto.decrement('totalExistenciaProducto', {
           by: detalle.cantidadVenta,
           where: { id: detalle.productoId },
@@ -304,6 +267,7 @@ const update = async (req: Request, res: Response) => {
       include: [
         { model: Cliente, as: "cliente", include: [{ model: Entidad, as: "entidad" }, { model: TipoCliente, as: "tipoCliente" }] },
         { model: Estado, as: "estado" },
+        { model: Bodega, as: "bodega" }, // NUEVA RELACIÓN
         { model: DetalleVenta, as: "detallesVenta", include: [{ model: Producto, as: "producto" }] },
         { model: VentaHasFormaPago, as: "formasPagoVenta", include: [{ model: FormaPago, as: "formaPago" }] },
       ],
@@ -441,6 +405,124 @@ const partialUpdate = async (req: Request, res: Response) => {
   }
 };
 
+const getAll = async (req: Request, res: Response) => {
+  try {
+    const ventas = await Venta.findAll({
+      include: [
+        {
+          model: Cliente,
+          as: "cliente",
+          include: [
+            {
+              model: Entidad,
+              as: "entidad",
+            },
+            {
+              model: TipoCliente,
+              as: "tipoCliente",
+            },
+          ],
+        },
+        {
+          model: Estado,
+          as: "estado",
+        },
+        {
+          model: DetalleVenta,
+          as: "detallesVenta",
+          include: [
+            {
+              model: Producto,
+              as: "producto",
+            },
+          ],
+        },
+        {
+          model: VentaHasFormaPago,
+          as: "formasPagoVenta",
+          include: [
+            {
+              model: FormaPago,
+              as: "formaPago",
+            },
+          ],
+        },
+      ],
+      order: [["fechaVenta", "DESC"]],
+    });
+
+    return res.status(200).json({ success: ventas.length > 0, data: ventas });
+  } catch (error) {
+    res.status(500).json(
+      await errorAndLogHandler({
+        level: errorLevels.error,
+        message: `Error obteniendo ventas: ${(error as Error).message}`,
+        error,
+        userId: req.user?.id || 0,
+      })
+    );
+  }
+};
+
+const getByID = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const venta = await Venta.findByPk(id, {
+      include: [
+        {
+          model: Cliente,
+          as: "cliente",
+          include: [
+            {
+              model: Entidad,
+              as: "entidad",
+            },
+            {
+              model: TipoCliente,
+              as: "tipoCliente",
+            },
+          ],
+        },
+        {
+          model: Estado,
+          as: "estado",
+        },
+        {
+          model: DetalleVenta,
+          as: "detallesVenta",
+          include: [
+            {
+              model: Producto,
+              as: "producto",
+            },
+          ],
+        },
+        {
+          model: VentaHasFormaPago,
+          as: "formasPagoVenta",
+          include: [
+            {
+              model: FormaPago,
+              as: "formaPago",
+            },
+          ],
+        },
+      ],
+    });
+
+    res.status(200).json({ success: venta !== null, data: venta });
+  } catch (error) {
+    res.status(500).json(
+      await errorAndLogHandler({
+        level: errorLevels.error,
+        message: `Error obteniendo la venta: ${id} ${(error as Error).message}`,
+        error,
+        userId: req.user?.id || 0,
+        genericId: id,
+      })
+    );
+  }
+};
 export const VentaController = {
   create,
   getAll,

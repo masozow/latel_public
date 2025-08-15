@@ -3,6 +3,7 @@ import { z } from "zod";
 export const VentaSchema = z.object({
   id: z.number().int().positive().optional(),
   clienteId: z.number().int().positive(),
+  bodegaId: z.number().int().positive(),
   fechaVenta: z.date(),
   totalVenta: z.number().positive(),
   numeroDocumentoVenta: z.string().optional().nullable(),

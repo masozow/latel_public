@@ -64,7 +64,7 @@ import VentaHasFormaPago from "./ventaHasFormaPago.model.js";
   Cliente.belongsTo(Entidad, { foreignKey: { name: "entidadId", allowNull: false }, as: "entidad" });
   Entidad.hasMany(Cliente, { foreignKey: { name: "entidadId", allowNull: false }, as: "clientes" });
 
-  //----------------Compra----------------
+  //---------------- Compra ----------------
   // Compra -> Estado (estado actual; relación directa en la tabla Compra)
   Compra.belongsTo(Estado, { foreignKey: "estadoId", as: "estado" });
   Estado.hasMany(Compra, { foreignKey: "estadoId", as: "compras" });
@@ -73,19 +73,20 @@ import VentaHasFormaPago from "./ventaHasFormaPago.model.js";
   Compra.belongsTo(Proveedor, { foreignKey: "proveedorId", as: "proveedor" });
   Proveedor.hasMany(Compra, { foreignKey: "proveedorId", as: "compras" });
 
-  // Compra -> DetalleCompra (1:N directa; DetalleCompra no es tabla pivote)
+  // Compra -> DetalleCompra (1:N directa)
   Compra.hasMany(DetalleCompra, { foreignKey: "compraId", as: "detallesCompra" });
   DetalleCompra.belongsTo(Compra, { foreignKey: "compraId", as: "compra" });
+
+  // Compra → Bodega (NOT NULL)
+  Compra.belongsTo(Bodega, { foreignKey: { name: "bodegaId", allowNull: false }, as: "bodega" });
+  Bodega.hasMany(Compra, { foreignKey: { name: "bodegaId", allowNull: false }, as: "compras" });
 
   //--------------- TipoCliente ---------------
   TipoCliente.belongsTo(Estado, { foreignKey: { name: "estadoId", allowNull: false }, as: "estado" });
   Estado.hasMany(TipoCliente, { foreignKey: { name: "estadoId", allowNull: false }, as: "tiposCliente" });
 
 
-  // ---------------------------
-  // Relaciones de CreditoCliente
-  // ---------------------------
-
+  //--------------- CreditoCliente -------------
   // CreditoCliente -> Cliente (FK directa)
   CreditoCliente.belongsTo(Cliente, { foreignKey: "clienteId", as: "cliente" });
   Cliente.hasMany(CreditoCliente, { foreignKey: "clienteId", as: "creditosCliente" });
@@ -317,6 +318,11 @@ import VentaHasFormaPago from "./ventaHasFormaPago.model.js";
   // Venta → Estado (NOT NULL)
   Venta.belongsTo(Estado, { foreignKey: { name: "estadoId", allowNull: false }, as: "estado" });
   Estado.hasMany(Venta, { foreignKey: { name: "estadoId", allowNull: false }, as: "ventas" });
+
+  // Venta → Bodega (NOT NULL)
+  Venta.belongsTo(Bodega, { foreignKey: { name: "bodegaId", allowNull: false }, as: "bodega" });
+  Bodega.hasMany(Venta, { foreignKey: { name: "bodegaId", allowNull: false }, as: "ventas" });
+
 
   //---------------------- Proveedor ----------------------------
   // Proveedor → Entidad (NOT NULL)

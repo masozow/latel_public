@@ -8,6 +8,7 @@ class Compra
 {
   declare id: number;
   declare proveedorId: number;
+  declare bodegaId: number; // NUEVO CAMPO
   declare fechaCompra: Date;
   declare totalCompra: number;
   declare numeroDocumentoCompra?: string | null;
@@ -31,6 +32,11 @@ Compra.init(
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: false,
       field: "Proveedor_Id",
+    },
+    bodegaId: { // NUEVO CAMPO
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: false,
+      field: "Bodega_Id",
     },
     fechaCompra: {
       type: DataTypes.DATE,

@@ -8,6 +8,7 @@ class Venta
 {
   declare id: number;
   declare clienteId: number;
+  declare bodegaId: number;
   declare fechaVenta: Date;
   declare totalVenta: number;
   declare numeroDocumentoVenta?: string | null;
@@ -30,6 +31,11 @@ Venta.init(
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: false,
       field: "Cliente_Id",
+    },
+    bodegaId: { // NUEVO CAMPO
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: false,
+      field: "Bodega_Id",
     },
     fechaVenta: {
       type: DataTypes.DATE,
