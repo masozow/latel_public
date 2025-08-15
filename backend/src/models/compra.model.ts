@@ -1,6 +1,7 @@
 import { DataTypes, Model } from "sequelize";
 import sequelize from "../config/sequelize.js";
 import { CompraAttributes, CompraCreationAttributes } from "../schemas/compra.schema.js";
+import { DetalleCompraAttributes } from "../schemas/detalleCompra.schema.js";
 
 class Compra
   extends Model<CompraAttributes, CompraCreationAttributes>
@@ -8,11 +9,12 @@ class Compra
 {
   declare id: number;
   declare proveedorId: number;
-  declare bodegaId: number; // NUEVO CAMPO
+  declare bodegaId: number;
   declare fechaCompra: Date;
   declare totalCompra: number;
   declare numeroDocumentoCompra?: string | null;
   declare serieDocumentoCompra?: string | null;
+  declare detalleCompra: DetalleCompraAttributes[];
   declare pagaIVA: boolean;
   declare compraContadoOCredito: boolean;
   declare estadoId: number;

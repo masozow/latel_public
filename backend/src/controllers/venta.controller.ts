@@ -3,7 +3,17 @@ import { Venta, Cliente, Entidad, TipoCliente, Estado, DetalleVenta, Producto, V
 import { errorAndLogHandler, errorLevels } from "../utils/errorHandler.js";
 import { VentaSchema } from "../schemas/venta.schema.js";
 import sequelize from "../config/sequelize.js";
-import { Op,QueryTypes } from "sequelize";
+import { Op, QueryTypes } from "sequelize";
+import { ESTADOS_VENTA } from "../types/estadosDictionary.type.js";
+import {
+  restaurarInventario,
+  reducirInventario,
+  validarTotalesVenta,
+  calcularTotalFormasPago,
+  calcularTotalDetalles,
+  esVentaModificable,
+  generarQueryEstadisticas
+} from "../helpers/ventaController.helper.js";
 
 const create = async (req: Request, res: Response) => {
   const t = await sequelize.transaction();
@@ -50,31 +60,17 @@ const create = async (req: Request, res: Response) => {
       );
     }
 
-    // Validar que el total de formas de pago coincida con el total de la venta
-    const totalFormasPago = formasPago.reduce((sum: number, forma: any) => 
-      sum + (parseFloat(forma.montoFormaPagoVenta) || 0), 0);
-    
-    if (Math.abs(totalFormasPago - parseResult.data.totalVenta) > 0.01) {
-      await t.rollback();
-      return res.status(400).json(
-        await errorAndLogHandler({
-          level: errorLevels.warn,
-          message: `El total de formas de pago (${totalFormasPago}) no coincide con el total de la venta (${parseResult.data.totalVenta})`,
-          userId,
-        })
-      );
-    }
+    // Validar totales usando las funciones helper
+    const totalFormasPago = calcularTotalFormasPago(formasPago);
+    const totalDetalles = calcularTotalDetalles(detallesVenta);
+    const validacion = validarTotalesVenta(totalFormasPago, totalDetalles, parseResult.data.totalVenta);
 
-    // Validar que el subtotal de detalles coincida con el total
-    const totalDetalles = detallesVenta.reduce((sum: number, detalle: any) => 
-      sum + (parseFloat(detalle.subTotalVenta) || 0), 0);
-    
-    if (Math.abs(totalDetalles - parseResult.data.totalVenta) > 0.01) {
+    if (!validacion.esValido) {
       await t.rollback();
       return res.status(400).json(
         await errorAndLogHandler({
           level: errorLevels.warn,
-          message: `El total de detalles (${totalDetalles}) no coincide con el total de la venta (${parseResult.data.totalVenta})`,
+          message: validacion.errores.join(', '),
           userId,
         })
       );
@@ -109,7 +105,7 @@ const create = async (req: Request, res: Response) => {
     // 1️⃣ Crear la Venta
     const nuevaVenta = await Venta.create({ 
       ...parseResult.data, 
-      estadoId: parseResult.data.estadoId || 1 
+      estadoId: parseResult.data.estadoId || ESTADOS_VENTA.PENDIENTE 
     }, { transaction: t });
 
     // 2️⃣ Verificar existencias antes de crear los detalles
@@ -155,25 +151,14 @@ const create = async (req: Request, res: Response) => {
     }));
     await DetalleVenta.bulkCreate(detallesConVentaId, { transaction: t });
 
-    // 4️⃣ Reducir existencias de productos
-    for (const detalle of detallesVenta) {
-      // Reducir en BodegaHasProducto
-      await BodegaHasProducto.decrement('existencia', {
-        by: detalle.cantidadVenta,
-        where: { 
-          productoId: detalle.productoId,
-          bodegaId: parseResult.data.bodegaId 
-        },
-        transaction: t
-      });
-
-      // Reducir existencia total en Producto
-      await Producto.decrement('totalExistenciaProducto', {
-        by: detalle.cantidadVenta,
-        where: { id: detalle.productoId },
-        transaction: t
-      });
-    }
+    // 4️⃣ Reducir existencias usando función helper
+    await reducirInventario(
+      detallesVenta,
+      parseResult.data.bodegaId,
+      t,
+      BodegaHasProducto.decrement.bind(BodegaHasProducto),
+      Producto.decrement.bind(Producto)
+    );
 
     // 5️⃣ Crear las Formas de Pago
     const formasPagoConVentaId = formasPago.map((forma: any) => ({
@@ -228,6 +213,19 @@ const update = async (req: Request, res: Response) => {
       );
     }
 
+    // Verificar si la venta es modificable
+    if (!esVentaModificable(ventaActual.estadoId)) {
+      await t.rollback();
+      return res.status(400).json(
+        await errorAndLogHandler({
+          level: errorLevels.warn,
+          message: "No se puede modificar una venta cancelada",
+          userId,
+          genericId: id,
+        })
+      );
+    }
+
     // Validación Zod de los datos de la venta
     const parseResult = VentaSchema.omit({ id: true, createdAt: true, updatedAt: true }).safeParse(ventaData);
     if (!parseResult.success) {
@@ -260,6 +258,25 @@ const update = async (req: Request, res: Response) => {
       }
     }
 
+    // Validar totales si se proporcionan nuevos detalles
+    if (detallesVenta && Array.isArray(detallesVenta) && formasPago && Array.isArray(formasPago)) {
+      const totalFormasPago = calcularTotalFormasPago(formasPago);
+      const totalDetalles = calcularTotalDetalles(detallesVenta);
+      const validacion = validarTotalesVenta(totalFormasPago, totalDetalles, parseResult.data.totalVenta);
+
+      if (!validacion.esValido) {
+        await t.rollback();
+        return res.status(400).json(
+          await errorAndLogHandler({
+            level: errorLevels.warn,
+            message: validacion.errores.join(', '),
+            userId,
+            genericId: id,
+          })
+        );
+      }
+    }
+
     // Actualizar la venta
     const [updatedRows] = await Venta.update(parseResult.data, { where: { id }, transaction: t });
     if (updatedRows === 0) {
@@ -282,24 +299,13 @@ const update = async (req: Request, res: Response) => {
         transaction: t 
       });
       
-      for (const detalle of detallesAntiguos) {
-        // Restaurar en BodegaHasProducto (usar bodega original)
-        await BodegaHasProducto.increment('existencia', {
-          by: detalle.cantidadVenta,
-          where: { 
-            productoId: detalle.productoId,
-            bodegaId: ventaActual.bodegaId 
-          },
-          transaction: t
-        });
-
-        // Restaurar existencia total en Producto
-        await Producto.increment('totalExistenciaProducto', {
-          by: detalle.cantidadVenta,
-          where: { id: detalle.productoId },
-          transaction: t
-        });
-      }
+      await restaurarInventario(
+        detallesAntiguos,
+        ventaActual.bodegaId,
+        t,
+        BodegaHasProducto.increment.bind(BodegaHasProducto),
+        Producto.increment.bind(Producto)
+      );
 
       // Eliminar detalles antiguos
       await DetalleVenta.destroy({ where: { ventaId: id }, transaction: t });
@@ -342,24 +348,13 @@ const update = async (req: Request, res: Response) => {
       await DetalleVenta.bulkCreate(detallesConVentaId, { transaction: t });
 
       // Reducir existencias con los nuevos detalles
-      for (const detalle of detallesVenta) {
-        // Reducir en BodegaHasProducto
-        await BodegaHasProducto.decrement('existencia', {
-          by: detalle.cantidadVenta,
-          where: { 
-            productoId: detalle.productoId,
-            bodegaId: nuevaBodegaId 
-          },
-          transaction: t
-        });
-
-        // Reducir existencia total en Producto
-        await Producto.decrement('totalExistenciaProducto', {
-          by: detalle.cantidadVenta,
-          where: { id: detalle.productoId },
-          transaction: t
-        });
-      }
+      await reducirInventario(
+        detallesVenta,
+        nuevaBodegaId,
+        t,
+        BodegaHasProducto.decrement.bind(BodegaHasProducto),
+        Producto.decrement.bind(Producto)
+      );
     }
 
     // Si se proporcionaron nuevas formas de pago, reemplazar las existentes
@@ -444,6 +439,19 @@ const partialUpdate = async (req: Request, res: Response) => {
       );
     }
 
+    // Verificar si la venta es modificable
+    if (!esVentaModificable(ventaExistente.estadoId)) {
+      await t.rollback();
+      return res.status(400).json(
+        await errorAndLogHandler({
+          level: errorLevels.warn,
+          message: "No se puede modificar una venta cancelada",
+          userId,
+          genericId: id,
+        })
+      );
+    }
+
     // Actualizar la venta si hay datos
     if (Object.keys(ventaData).length > 0) {
       // Si se está cambiando la bodega, verificar que existe
@@ -503,24 +511,13 @@ const partialUpdate = async (req: Request, res: Response) => {
         transaction: t
       });
       
-      for (const detalle of detallesAntiguos) {
-        // Restaurar en BodegaHasProducto usando la bodega original
-        await BodegaHasProducto.increment('existencia', {
-          by: detalle.cantidadVenta,
-          where: { 
-            productoId: detalle.productoId,
-            bodegaId: ventaExistente.bodegaId // Usar bodega original
-          },
-          transaction: t
-        });
-
-        // Restaurar existencia total en Producto
-        await Producto.increment('totalExistenciaProducto', {
-          by: detalle.cantidadVenta,
-          where: { id: detalle.productoId },
-          transaction: t
-        });
-      }
+      await restaurarInventario(
+        detallesAntiguos,
+        ventaExistente.bodegaId, // Usar bodega original
+        t,
+        BodegaHasProducto.increment.bind(BodegaHasProducto),
+        Producto.increment.bind(Producto)
+      );
 
       // Eliminar detalles antiguos
       await DetalleVenta.destroy({ where: { ventaId: id }, transaction: t });
@@ -567,22 +564,13 @@ const partialUpdate = async (req: Request, res: Response) => {
       await DetalleVenta.bulkCreate(detallesConVentaId, { transaction: t });
 
       // Reducir existencias con los nuevos detalles en la bodega actual
-      for (const detalle of detallesVenta) {
-        await BodegaHasProducto.decrement('existencia', {
-          by: detalle.cantidadVenta,
-          where: { 
-            productoId: detalle.productoId,
-            bodegaId: bodegaActual 
-          },
-          transaction: t
-        });
-
-        await Producto.decrement('totalExistenciaProducto', {
-          by: detalle.cantidadVenta,
-          where: { id: detalle.productoId },
-          transaction: t
-        });
-      }
+      await reducirInventario(
+        detallesVenta,
+        bodegaActual,
+        t,
+        BodegaHasProducto.decrement.bind(BodegaHasProducto),
+        Producto.decrement.bind(Producto)
+      );
     }
 
     // Manejar formas de pago si se proporcionan
@@ -783,7 +771,7 @@ const cancelar = async (req: Request, res: Response) => {
       include: [
         {
           model: DetalleVenta,
-          as: "detalleVenta",
+          as: "detallesVenta", // Usar el alias correcto
         }
       ],
       transaction: t
@@ -802,7 +790,7 @@ const cancelar = async (req: Request, res: Response) => {
     }
 
     // Verificar que la venta no esté ya cancelada
-    if (venta.estadoId === 3) { // Asumiendo que 3 = Cancelado
+    if (venta.estadoId === ESTADOS_VENTA.CANCELADA) {
       await t.rollback();
       return res.status(400).json(
         await errorAndLogHandler({
@@ -814,29 +802,18 @@ const cancelar = async (req: Request, res: Response) => {
       );
     }
 
-    // Restaurar existencias de todos los productos
-    for (const detalle of venta.detalleVenta ) {
-      // Restaurar en BodegaHasProducto
-      await BodegaHasProducto.increment('existencia', {
-        by: detalle.cantidadVenta,
-        where: { 
-          productoId: detalle.productoId,
-          bodegaId: venta.bodegaId 
-        },
-        transaction: t
-      });
+    // Restaurar existencias usando función helper
+    await restaurarInventario(
+      venta.detalleVenta, 
+      venta.bodegaId,
+      t,
+      BodegaHasProducto.increment.bind(BodegaHasProducto),
+      Producto.increment.bind(Producto)
+    );
 
-      // Restaurar existencia total en Producto
-      await Producto.increment('totalExistenciaProducto', {
-        by: detalle.cantidadVenta,
-        where: { id: detalle.productoId },
-        transaction: t
-      });
-    }
-
-    // Cambiar estado a cancelado (asumiendo que 3 = Cancelado)
+    // Cambiar estado a cancelado
     await Venta.update(
-      { estadoId: 3 },
+      { estadoId: ESTADOS_VENTA.CANCELADA },
       { where: { id }, transaction: t }
     );
 
@@ -964,19 +941,10 @@ const getByDateRange = async (req: Request, res: Response) => {
 
 const getEstadisticas = async (req: Request, res: Response) => {
   try {
-    const estadisticas = await sequelize.query(`
-      SELECT 
-        COUNT(*) as totalVentas,
-        SUM(totalVenta) as montoTotal,
-        AVG(totalVenta) as montoPromedio,
-        MAX(totalVenta) as montoMaximo,
-        MIN(totalVenta) as montoMinimo,
-        DATE(fechaVenta) as fecha
-      FROM Venta 
-      WHERE fechaVenta >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-      GROUP BY DATE(fechaVenta)
-      ORDER BY fecha DESC
-    `, {
+    const { query, replacements } = generarQueryEstadisticas(30);
+    
+    const estadisticas = await sequelize.query(query, {
+      replacements,
       type: QueryTypes.SELECT
     });
 
