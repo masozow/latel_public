@@ -5,6 +5,7 @@ export const PagoCuotaCreditoProveedorSchema = z.object({
   formaPagoId: z.number().int().positive(),
   montoPagoCreditoProveedor: z.number().positive(),
   comprobantePagoId: z.bigint().positive().optional().nullable(),
+  estadoId: z.number().int().positive(),
   createdAt: z.date().optional(),
   updatedAt: z.date().optional(),
 });

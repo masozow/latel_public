@@ -38,18 +38,18 @@ import VentaHasEstado from "./ventaHasEstado.model.js";
 import VentaHasFormaPago from "./ventaHasFormaPago.model.js";
 
 
-  //----------------Producto----------------
+  //---------------- Producto ----------------
   // Producto → Estado (NOT NULL)
   Producto.belongsTo(Estado, { foreignKey: { name: "estadoId", allowNull: false }, as: "estado" });
   Estado.hasMany(Producto, { foreignKey: { name: "estadoId", allowNull: false }, as: "productos" });
 
-  // Producto → TipoProducto (NOT NULL)
-  Producto.belongsTo(TipoProducto, { foreignKey: { name: "tipoProductoId", allowNull: false }, as: "tipoProducto" });
-  TipoProducto.hasMany(Producto, { foreignKey: { name: "tipoProductoId", allowNull: false }, as: "productos" });
+  // Producto → LineaProducto (NULL permitido)
+  Producto.belongsTo(LineaProducto, { foreignKey: { name: "lineaProductoId", allowNull: true }, as: "lineaProducto" });
+  LineaProducto.hasMany(Producto, { foreignKey: { name: "lineaProductoId", allowNull: true }, as: "productosLineaProducto" });
 
   // Producto → Marca (NULL permitido)
-  Producto.belongsTo(Marca, { foreignKey: { name: "marcaId", allowNull: true }, as: "marca" });
-  Marca.hasMany(Producto, { foreignKey: { name: "marcaId", allowNull: true }, as: "productosMarca" });
+  Producto.belongsTo(Marca, { foreignKey: { name: "marcaId", allowNull: false }, as: "marca" });
+  Marca.hasMany(Producto, { foreignKey: { name: "marcaId", allowNull: false }, as: "productosMarca" });
 
   // Producto → PrecioProducto (NULL permitido)
   Producto.belongsTo(PrecioProducto, { foreignKey: { name: "precioPorDefectoId", allowNull: true }, as: "precioPorDefecto" });

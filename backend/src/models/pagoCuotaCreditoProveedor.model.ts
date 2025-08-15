@@ -10,6 +10,7 @@ class PagoCuotaCreditoProveedor
   declare formaPagoId: number;
   declare montoPagoCreditoProveedor: number;
   declare comprobantePagoId?: bigint | null;
+  declare estadoId: number;
   declare readonly createdAt: Date;
   declare readonly updatedAt: Date;
 }
@@ -36,6 +37,11 @@ PagoCuotaCreditoProveedor.init(
       type: DataTypes.BIGINT.UNSIGNED,
       allowNull: true,
       field: "ComprobantePago_Id",
+    },
+    estadoId: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: false,
+      field: "Estado_Id",
     },
     createdAt: {
       type: DataTypes.DATE,
