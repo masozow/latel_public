@@ -59,11 +59,6 @@ Venta.init(
       allowNull: true,
       field: "SerieDocumentoVenta",
     },
-    detalleVenta: {
-      type: DataTypes.JSON,
-      allowNull: false,
-      field: "DetalleVenta",
-    },
     generaIVA: {
       type: DataTypes.BOOLEAN,
       allowNull: false,

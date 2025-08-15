@@ -9,7 +9,7 @@ export const VentaSchema = z.object({
   totalVenta: z.number().positive(),
   numeroDocumentoVenta: z.string().optional().nullable(),
   serieDocumentoVenta: z.string().optional().nullable(),
-  detalleVenta: z.array(DetalleVentaSchema),
+  detalleVenta: z.array(DetalleVentaSchema).optional().nullable(),
   generaIVA: z.boolean(),
   estadoId: z.number().int().positive(),
   createdAt: z.date().optional(),
@@ -17,4 +17,4 @@ export const VentaSchema = z.object({
 });
 
 export type VentaAttributes = z.infer<typeof VentaSchema>;
-export type VentaCreationAttributes = Omit<VentaAttributes, "id" | "createdAt" | "updatedAt">;
+export type VentaCreationAttributes = Omit<VentaAttributes, "id" | "createdAt" | "updatedAt" | "detalleVenta">;
