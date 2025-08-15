@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DetalleVentaSchema } from "./detalleVenta.schema.js";
 
 export const VentaSchema = z.object({
   id: z.number().int().positive().optional(),
@@ -8,6 +9,7 @@ export const VentaSchema = z.object({
   totalVenta: z.number().positive(),
   numeroDocumentoVenta: z.string().optional().nullable(),
   serieDocumentoVenta: z.string().optional().nullable(),
+  detalleVenta: z.array(DetalleVentaSchema),
   generaIVA: z.boolean(),
   estadoId: z.number().int().positive(),
   createdAt: z.date().optional(),

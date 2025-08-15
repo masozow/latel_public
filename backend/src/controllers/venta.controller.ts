@@ -3,6 +3,7 @@ import { Venta, Cliente, Entidad, TipoCliente, Estado, DetalleVenta, Producto, V
 import { errorAndLogHandler, errorLevels } from "../utils/errorHandler.js";
 import { VentaSchema } from "../schemas/venta.schema.js";
 import sequelize from "../config/sequelize.js";
+import { Op,QueryTypes } from "sequelize";
 
 const create = async (req: Request, res: Response) => {
   const t = await sequelize.transaction();
@@ -14,10 +15,11 @@ const create = async (req: Request, res: Response) => {
     // Validación Zod de los datos de la venta
     const parseResult = VentaSchema.omit({ id: true, createdAt: true, updatedAt: true }).safeParse(ventaData);
     if (!parseResult.success) {
+      await t.rollback();
       return res.status(400).json(
         await errorAndLogHandler({
           level: errorLevels.warn,
-          message: `Error: ${parseResult.error.issues
+          message: `Error de validación: ${parseResult.error.issues
             .map((issue) => `${issue.path.join(".")} - ${issue.message}`)
             .join(", ")}`,
           userId,
@@ -25,76 +27,160 @@ const create = async (req: Request, res: Response) => {
       );
     }
 
+    // Validaciones de negocio
+    if (!detallesVenta || !Array.isArray(detallesVenta) || detallesVenta.length === 0) {
+      await t.rollback();
+      return res.status(400).json(
+        await errorAndLogHandler({
+          level: errorLevels.warn,
+          message: "Los detalles de venta son obligatorios",
+          userId,
+        })
+      );
+    }
+
+    if (!formasPago || !Array.isArray(formasPago) || formasPago.length === 0) {
+      await t.rollback();
+      return res.status(400).json(
+        await errorAndLogHandler({
+          level: errorLevels.warn,
+          message: "Las formas de pago son obligatorias",
+          userId,
+        })
+      );
+    }
+
+    // Validar que el total de formas de pago coincida con el total de la venta
+    const totalFormasPago = formasPago.reduce((sum: number, forma: any) => 
+      sum + (parseFloat(forma.montoFormaPagoVenta) || 0), 0);
+    
+    if (Math.abs(totalFormasPago - parseResult.data.totalVenta) > 0.01) {
+      await t.rollback();
+      return res.status(400).json(
+        await errorAndLogHandler({
+          level: errorLevels.warn,
+          message: `El total de formas de pago (${totalFormasPago}) no coincide con el total de la venta (${parseResult.data.totalVenta})`,
+          userId,
+        })
+      );
+    }
+
+    // Validar que el subtotal de detalles coincida con el total
+    const totalDetalles = detallesVenta.reduce((sum: number, detalle: any) => 
+      sum + (parseFloat(detalle.subTotalVenta) || 0), 0);
+    
+    if (Math.abs(totalDetalles - parseResult.data.totalVenta) > 0.01) {
+      await t.rollback();
+      return res.status(400).json(
+        await errorAndLogHandler({
+          level: errorLevels.warn,
+          message: `El total de detalles (${totalDetalles}) no coincide con el total de la venta (${parseResult.data.totalVenta})`,
+          userId,
+        })
+      );
+    }
+
+    // Verificar que el cliente existe
+    const cliente = await Cliente.findByPk(parseResult.data.clienteId);
+    if (!cliente) {
+      await t.rollback();
+      return res.status(400).json(
+        await errorAndLogHandler({
+          level: errorLevels.warn,
+          message: `Cliente con ID ${parseResult.data.clienteId} no encontrado`,
+          userId,
+        })
+      );
+    }
+
+    // Verificar que la bodega existe
+    const bodega = await Bodega.findByPk(parseResult.data.bodegaId);
+    if (!bodega) {
+      await t.rollback();
+      return res.status(400).json(
+        await errorAndLogHandler({
+          level: errorLevels.warn,
+          message: `Bodega con ID ${parseResult.data.bodegaId} no encontrada`,
+          userId,
+        })
+      );
+    }
+
     // 1️⃣ Crear la Venta
-    const nuevaVenta = await Venta.create({ ...parseResult.data, estadoId: ventaData.estadoId || 1 }, { transaction: t });
+    const nuevaVenta = await Venta.create({ 
+      ...parseResult.data, 
+      estadoId: parseResult.data.estadoId || 1 
+    }, { transaction: t });
 
-    // 2️⃣ Crear los Detalles de Venta si se proporcionaron
-    if (detallesVenta && Array.isArray(detallesVenta)) {
-      // Verificar existencias antes de crear los detalles
-      for (const detalle of detallesVenta as DetalleVenta[]) {
-        const producto = await Producto.findByPk(detalle.productoId);
-        if (!producto) {
-          throw new Error(`Producto con ID ${detalle.productoId} no encontrado`);
-        }
-
-        // Verificar existencia en la bodega específica
-        const bodegaProducto = await BodegaHasProducto.findOne({
-          where: { 
-            productoId: detalle.productoId, 
-            bodegaId: ventaData.bodegaId 
-          },
-          transaction: t
-        });
-
-        if (!bodegaProducto) {
-          throw new Error(`Producto ${producto.descripcionProducto} no encontrado en la bodega especificada`);
-        }
-
-        const existenciaEnBodega = bodegaProducto.existencia || 0;
-        if (existenciaEnBodega < detalle.cantidadVenta) {
-          throw new Error(`Stock insuficiente en bodega para el producto ${producto.descripcionProducto}. Disponible: ${existenciaEnBodega}, Solicitado: ${detalle.cantidadVenta}`);
-        }
-
-        // Verificar también existencia total (por seguridad)
-        if (producto.totalExistenciaProducto < detalle.cantidadVenta) {
-          throw new Error(`Stock insuficiente total para el producto ${producto.descripcionProducto}. Disponible: ${producto.totalExistenciaProducto}, Solicitado: ${detalle.cantidadVenta}`);
-        }
+    // 2️⃣ Verificar existencias antes de crear los detalles
+    for (const detalle of detallesVenta) {
+      // Validar que cantidadVenta sea positiva
+      if (!detalle.cantidadVenta || detalle.cantidadVenta <= 0) {
+        throw new Error(`La cantidad de venta debe ser mayor a 0 para el producto ID ${detalle.productoId}`);
       }
 
-      for (const detalle of detallesVenta) {
-        detalle.ventaId = nuevaVenta.id;
+      const producto = await Producto.findByPk(detalle.productoId);
+      if (!producto) {
+        throw new Error(`Producto con ID ${detalle.productoId} no encontrado`);
       }
-      await DetalleVenta.bulkCreate(detallesVenta, { transaction: t });
 
-      // Reducir existencias de productos
-      for (const detalle of detallesVenta) {
-        // Reducir en BodegaHasProducto
-        await BodegaHasProducto.decrement('existencia', {
-          by: detalle.cantidadVenta,
-          where: { 
-            productoId: detalle.productoId,
-            bodegaId: ventaData.bodegaId 
-          },
-          transaction: t
-        });
+      // Verificar existencia en la bodega específica
+      const bodegaProducto = await BodegaHasProducto.findOne({
+        where: { 
+          productoId: detalle.productoId, 
+          bodegaId: parseResult.data.bodegaId 
+        },
+        transaction: t
+      });
 
-        // Reducir existencia total en Producto
-        await Producto.decrement('totalExistenciaProducto', {
-          by: detalle.cantidadVenta,
-          where: { id: detalle.productoId },
-          transaction: t
-        });
+      if (!bodegaProducto) {
+        throw new Error(`Producto ${producto.descripcionProducto} no está disponible en la bodega ${bodega.descripcionBodega}`);
+      }
+
+      const existenciaEnBodega = bodegaProducto.existencia || 0;
+      if (existenciaEnBodega < detalle.cantidadVenta) {
+        throw new Error(`Stock insuficiente en bodega ${bodega.descripcionBodega} para el producto ${producto.descripcionProducto}. Disponible: ${existenciaEnBodega}, Solicitado: ${detalle.cantidadVenta}`);
+      }
+
+      // Verificar también existencia total (por seguridad)
+      if (producto.totalExistenciaProducto < detalle.cantidadVenta) {
+        throw new Error(`Stock total insuficiente para el producto ${producto.descripcionProducto}. Disponible: ${producto.totalExistenciaProducto}, Solicitado: ${detalle.cantidadVenta}`);
       }
     }
 
-    // 3️⃣ Crear las Formas de Pago si se proporcionaron
-    if (formasPago && Array.isArray(formasPago)) {
-      const formasPagoConVentaId = formasPago.map((forma: any) => ({
-        ...forma,
-        ventaId: nuevaVenta.id,
-      }));
-      await VentaHasFormaPago.bulkCreate(formasPagoConVentaId, { transaction: t });
+    // 3️⃣ Crear detalles de venta
+    const detallesConVentaId = detallesVenta.map((detalle: any) => ({
+      ...detalle,
+      ventaId: nuevaVenta.id,
+    }));
+    await DetalleVenta.bulkCreate(detallesConVentaId, { transaction: t });
+
+    // 4️⃣ Reducir existencias de productos
+    for (const detalle of detallesVenta) {
+      // Reducir en BodegaHasProducto
+      await BodegaHasProducto.decrement('existencia', {
+        by: detalle.cantidadVenta,
+        where: { 
+          productoId: detalle.productoId,
+          bodegaId: parseResult.data.bodegaId 
+        },
+        transaction: t
+      });
+
+      // Reducir existencia total en Producto
+      await Producto.decrement('totalExistenciaProducto', {
+        by: detalle.cantidadVenta,
+        where: { id: detalle.productoId },
+        transaction: t
+      });
     }
+
+    // 5️⃣ Crear las Formas de Pago
+    const formasPagoConVentaId = formasPago.map((forma: any) => ({
+      ...forma,
+      ventaId: nuevaVenta.id,
+    }));
+    await VentaHasFormaPago.bulkCreate(formasPagoConVentaId, { transaction: t });
 
     await t.commit();
 
@@ -129,7 +215,7 @@ const update = async (req: Request, res: Response) => {
     const { detallesVenta, formasPago, ...ventaData } = req.body;
 
     // Obtener la venta actual para conocer la bodega original
-    const ventaActual = await Venta.findByPk(id);
+    const ventaActual = await Venta.findByPk(id, { transaction: t });
     if (!ventaActual) {
       await t.rollback();
       return res.status(404).json(
@@ -145,10 +231,11 @@ const update = async (req: Request, res: Response) => {
     // Validación Zod de los datos de la venta
     const parseResult = VentaSchema.omit({ id: true, createdAt: true, updatedAt: true }).safeParse(ventaData);
     if (!parseResult.success) {
+      await t.rollback();
       return res.status(400).json(
         await errorAndLogHandler({
           level: errorLevels.warn,
-          message: `Error: ${parseResult.error.issues
+          message: `Error de validación: ${parseResult.error.issues
             .map((issue) => `${issue.path.join(".")} - ${issue.message}`)
             .join(", ")}`,
           userId,
@@ -157,8 +244,24 @@ const update = async (req: Request, res: Response) => {
       );
     }
 
+    // Si se cambia la bodega, verificar que existe
+    if (parseResult.data.bodegaId && parseResult.data.bodegaId !== ventaActual.bodegaId) {
+      const bodega = await Bodega.findByPk(parseResult.data.bodegaId);
+      if (!bodega) {
+        await t.rollback();
+        return res.status(400).json(
+          await errorAndLogHandler({
+            level: errorLevels.warn,
+            message: `Bodega con ID ${parseResult.data.bodegaId} no encontrada`,
+            userId,
+            genericId: id,
+          })
+        );
+      }
+    }
+
     // Actualizar la venta
-    const [updatedRows] = await Venta.update(ventaData, { where: { id }, transaction: t });
+    const [updatedRows] = await Venta.update(parseResult.data, { where: { id }, transaction: t });
     if (updatedRows === 0) {
       await t.rollback();
       return res.status(404).json(
@@ -174,7 +277,11 @@ const update = async (req: Request, res: Response) => {
     // Si se proporcionaron nuevos detalles, reemplazar los existentes
     if (detallesVenta && Array.isArray(detallesVenta)) {
       // Primero restaurar las existencias de los detalles antiguos
-      const detallesAntiguos = await DetalleVenta.findAll({ where: { ventaId: id } });
+      const detallesAntiguos = await DetalleVenta.findAll({ 
+        where: { ventaId: id }, 
+        transaction: t 
+      });
+      
       for (const detalle of detallesAntiguos) {
         // Restaurar en BodegaHasProducto (usar bodega original)
         await BodegaHasProducto.increment('existencia', {
@@ -198,8 +305,12 @@ const update = async (req: Request, res: Response) => {
       await DetalleVenta.destroy({ where: { ventaId: id }, transaction: t });
 
       // Verificar existencias para los nuevos detalles en la nueva bodega
-      const nuevaBodegaId = ventaData.bodegaId || ventaActual.bodegaId;
+      const nuevaBodegaId = parseResult.data.bodegaId || ventaActual.bodegaId;
       for (const detalle of detallesVenta) {
+        if (!detalle.cantidadVenta || detalle.cantidadVenta <= 0) {
+          throw new Error(`La cantidad de venta debe ser mayor a 0 para el producto ID ${detalle.productoId}`);
+        }
+
         const producto = await Producto.findByPk(detalle.productoId);
         if (!producto) {
           throw new Error(`Producto con ID ${detalle.productoId} no encontrado`);
@@ -265,20 +376,36 @@ const update = async (req: Request, res: Response) => {
 
     const updatedVenta = await Venta.findByPk(id, {
       include: [
-        { model: Cliente, as: "cliente", include: [{ model: Entidad, as: "entidad" }, { model: TipoCliente, as: "tipoCliente" }] },
+        { 
+          model: Cliente, 
+          as: "cliente", 
+          include: [
+            { model: Entidad, as: "entidad" }, 
+            { model: TipoCliente, as: "tipoCliente" }
+          ] 
+        },
         { model: Estado, as: "estado" },
-        { model: Bodega, as: "bodega" }, // NUEVA RELACIÓN
-        { model: DetalleVenta, as: "detallesVenta", include: [{ model: Producto, as: "producto" }] },
-        { model: VentaHasFormaPago, as: "formasPagoVenta", include: [{ model: FormaPago, as: "formaPago" }] },
+        { model: Bodega, as: "bodega" },
+        { 
+          model: DetalleVenta, 
+          as: "detallesVenta", 
+          include: [{ model: Producto, as: "producto" }] 
+        },
+        { 
+          model: VentaHasFormaPago, 
+          as: "formasPagoVenta", 
+          include: [{ model: FormaPago, as: "formaPago" }] 
+        },
       ],
     });
 
     res.status(200).json(
       await errorAndLogHandler({
         level: errorLevels.info,
-        message: `Venta actualizada: ${JSON.stringify(updatedVenta?.dataValues).replace(/"/g, "'")}`,
+        message: `Venta actualizada exitosamente`,
         userId,
         genericId: id,
+        shouldSaveLog: true,
       })
     );
   } catch (error) {
@@ -303,8 +430,54 @@ const partialUpdate = async (req: Request, res: Response) => {
   try {
     const { detallesVenta, formasPago, ...ventaData } = req.body;
 
+    // Verificar que la venta existe
+    const ventaExistente = await Venta.findByPk(id, { transaction: t });
+    if (!ventaExistente) {
+      await t.rollback();
+      return res.status(404).json(
+        await errorAndLogHandler({
+          level: errorLevels.warn,
+          message: `Venta con ID ${id} no encontrada`,
+          userId,
+          genericId: id,
+        })
+      );
+    }
+
     // Actualizar la venta si hay datos
     if (Object.keys(ventaData).length > 0) {
+      // Si se está cambiando la bodega, verificar que existe
+      if (ventaData.bodegaId && ventaData.bodegaId !== ventaExistente.bodegaId) {
+        const bodega = await Bodega.findByPk(ventaData.bodegaId);
+        if (!bodega) {
+          await t.rollback();
+          return res.status(400).json(
+            await errorAndLogHandler({
+              level: errorLevels.warn,
+              message: `Bodega con ID ${ventaData.bodegaId} no encontrada`,
+              userId,
+              genericId: id,
+            })
+          );
+        }
+      }
+
+      // Si se está cambiando el cliente, verificar que existe
+      if (ventaData.clienteId && ventaData.clienteId !== ventaExistente.clienteId) {
+        const cliente = await Cliente.findByPk(ventaData.clienteId);
+        if (!cliente) {
+          await t.rollback();
+          return res.status(400).json(
+            await errorAndLogHandler({
+              level: errorLevels.warn,
+              message: `Cliente con ID ${ventaData.clienteId} no encontrado`,
+              userId,
+              genericId: id,
+            })
+          );
+        }
+      }
+
       const [updatedRows] = await Venta.update(ventaData, { where: { id }, transaction: t });
       if (updatedRows === 0) {
         await t.rollback();
@@ -321,9 +494,27 @@ const partialUpdate = async (req: Request, res: Response) => {
 
     // Manejar detalles si se proporcionan
     if (detallesVenta && Array.isArray(detallesVenta)) {
+      // Obtener la bodega actual (puede haber cambiado en esta misma operación)
+      const bodegaActual = ventaData.bodegaId || ventaExistente.bodegaId;
+
       // Restaurar existencias de detalles antiguos
-      const detallesAntiguos = await DetalleVenta.findAll({ where: { ventaId: id } });
+      const detallesAntiguos = await DetalleVenta.findAll({ 
+        where: { ventaId: id },
+        transaction: t
+      });
+      
       for (const detalle of detallesAntiguos) {
+        // Restaurar en BodegaHasProducto usando la bodega original
+        await BodegaHasProducto.increment('existencia', {
+          by: detalle.cantidadVenta,
+          where: { 
+            productoId: detalle.productoId,
+            bodegaId: ventaExistente.bodegaId // Usar bodega original
+          },
+          transaction: t
+        });
+
+        // Restaurar existencia total en Producto
         await Producto.increment('totalExistenciaProducto', {
           by: detalle.cantidadVenta,
           where: { id: detalle.productoId },
@@ -336,12 +527,35 @@ const partialUpdate = async (req: Request, res: Response) => {
 
       // Verificar existencias para los nuevos detalles
       for (const detalle of detallesVenta) {
+        if (!detalle.cantidadVenta || detalle.cantidadVenta <= 0) {
+          throw new Error(`La cantidad de venta debe ser mayor a 0 para el producto ID ${detalle.productoId}`);
+        }
+
         const producto = await Producto.findByPk(detalle.productoId);
         if (!producto) {
           throw new Error(`Producto con ID ${detalle.productoId} no encontrado`);
         }
+
+        // Verificar existencia en la bodega (actual, que puede haber cambiado)
+        const bodegaProducto = await BodegaHasProducto.findOne({
+          where: { 
+            productoId: detalle.productoId, 
+            bodegaId: bodegaActual 
+          },
+          transaction: t
+        });
+
+        if (!bodegaProducto) {
+          throw new Error(`Producto ${producto.descripcionProducto} no está disponible en la bodega especificada`);
+        }
+
+        const existenciaEnBodega = bodegaProducto.existencia || 0;
+        if (existenciaEnBodega < detalle.cantidadVenta) {
+          throw new Error(`Stock insuficiente en bodega para el producto ${producto.descripcionProducto}. Disponible: ${existenciaEnBodega}, Solicitado: ${detalle.cantidadVenta}`);
+        }
+
         if (producto.totalExistenciaProducto < detalle.cantidadVenta) {
-          throw new Error(`Stock insuficiente para el producto ${producto.descripcionProducto}. Disponible: ${producto.totalExistenciaProducto}, Solicitado: ${detalle.cantidadVenta}`);
+          throw new Error(`Stock total insuficiente para el producto ${producto.descripcionProducto}. Disponible: ${producto.totalExistenciaProducto}, Solicitado: ${detalle.cantidadVenta}`);
         }
       }
 
@@ -352,8 +566,17 @@ const partialUpdate = async (req: Request, res: Response) => {
       }));
       await DetalleVenta.bulkCreate(detallesConVentaId, { transaction: t });
 
-      // Reducir existencias con los nuevos detalles
+      // Reducir existencias con los nuevos detalles en la bodega actual
       for (const detalle of detallesVenta) {
+        await BodegaHasProducto.decrement('existencia', {
+          by: detalle.cantidadVenta,
+          where: { 
+            productoId: detalle.productoId,
+            bodegaId: bodegaActual 
+          },
+          transaction: t
+        });
+
         await Producto.decrement('totalExistenciaProducto', {
           by: detalle.cantidadVenta,
           where: { id: detalle.productoId },
@@ -376,19 +599,36 @@ const partialUpdate = async (req: Request, res: Response) => {
 
     const updatedVenta = await Venta.findByPk(id, {
       include: [
-        { model: Cliente, as: "cliente", include: [{ model: Entidad, as: "entidad" }, { model: TipoCliente, as: "tipoCliente" }] },
+        { 
+          model: Cliente, 
+          as: "cliente", 
+          include: [
+            { model: Entidad, as: "entidad" }, 
+            { model: TipoCliente, as: "tipoCliente" }
+          ] 
+        },
         { model: Estado, as: "estado" },
-        { model: DetalleVenta, as: "detallesVenta", include: [{ model: Producto, as: "producto" }] },
-        { model: VentaHasFormaPago, as: "formasPagoVenta", include: [{ model: FormaPago, as: "formaPago" }] },
+        { model: Bodega, as: "bodega" },
+        { 
+          model: DetalleVenta, 
+          as: "detallesVenta", 
+          include: [{ model: Producto, as: "producto" }] 
+        },
+        { 
+          model: VentaHasFormaPago, 
+          as: "formasPagoVenta", 
+          include: [{ model: FormaPago, as: "formaPago" }] 
+        },
       ],
     });
 
     res.status(200).json(
       await errorAndLogHandler({
         level: errorLevels.info,
-        message: `Venta actualizada parcialmente: ${JSON.stringify(updatedVenta?.dataValues).replace(/"/g, "'")}`,
+        message: `Venta actualizada parcialmente exitosamente`,
         userId,
         genericId: id,
+        shouldSaveLog: true,
       })
     );
   } catch (error) {
@@ -426,6 +666,10 @@ const getAll = async (req: Request, res: Response) => {
         {
           model: Estado,
           as: "estado",
+        },
+        {
+          model: Bodega,
+          as: "bodega",
         },
         {
           model: DetalleVenta,
@@ -488,6 +732,10 @@ const getByID = async (req: Request, res: Response) => {
           as: "estado",
         },
         {
+          model: Bodega,
+          as: "bodega",
+        },
+        {
           model: DetalleVenta,
           as: "detallesVenta",
           include: [
@@ -523,10 +771,236 @@ const getByID = async (req: Request, res: Response) => {
     );
   }
 };
+
+const cancelar = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const userId = req.user?.id || 0;
+  const t = await sequelize.transaction();
+
+  try {
+    // Verificar que la venta existe y obtener sus detalles
+    const venta = await Venta.findByPk(id, {
+      include: [
+        {
+          model: DetalleVenta,
+          as: "detalleVenta",
+        }
+      ],
+      transaction: t
+    });
+
+    if (!venta) {
+      await t.rollback();
+      return res.status(404).json(
+        await errorAndLogHandler({
+          level: errorLevels.warn,
+          message: `Venta con ID ${id} no encontrada`,
+          userId,
+          genericId: id,
+        })
+      );
+    }
+
+    // Verificar que la venta no esté ya cancelada
+    if (venta.estadoId === 3) { // Asumiendo que 3 = Cancelado
+      await t.rollback();
+      return res.status(400).json(
+        await errorAndLogHandler({
+          level: errorLevels.warn,
+          message: `La venta ${id} ya está cancelada`,
+          userId,
+          genericId: id,
+        })
+      );
+    }
+
+    // Restaurar existencias de todos los productos
+    for (const detalle of venta.detalleVenta ) {
+      // Restaurar en BodegaHasProducto
+      await BodegaHasProducto.increment('existencia', {
+        by: detalle.cantidadVenta,
+        where: { 
+          productoId: detalle.productoId,
+          bodegaId: venta.bodegaId 
+        },
+        transaction: t
+      });
+
+      // Restaurar existencia total en Producto
+      await Producto.increment('totalExistenciaProducto', {
+        by: detalle.cantidadVenta,
+        where: { id: detalle.productoId },
+        transaction: t
+      });
+    }
+
+    // Cambiar estado a cancelado (asumiendo que 3 = Cancelado)
+    await Venta.update(
+      { estadoId: 3 },
+      { where: { id }, transaction: t }
+    );
+
+    await t.commit();
+
+    res.status(200).json(
+      await errorAndLogHandler({
+        level: errorLevels.info,
+        message: `Venta ${id} cancelada exitosamente`,
+        userId,
+        genericId: id,
+        shouldSaveLog: true,
+      })
+    );
+  } catch (error) {
+    await t.rollback();
+    res.status(400).json(
+      await errorAndLogHandler({
+        level: errorLevels.error,
+        message: `Error cancelando venta: ${id} - ${(error as Error).message}`,
+        error,
+        userId,
+        genericId: id,
+      })
+    );
+  }
+};
+
+const getByCliente = async (req: Request, res: Response) => {
+  const { clienteId } = req.params;
+  try {
+    const ventas = await Venta.findAll({
+      where: { clienteId },
+      include: [
+        {
+          model: Cliente,
+          as: "cliente",
+          include: [
+            { model: Entidad, as: "entidad" },
+            { model: TipoCliente, as: "tipoCliente" },
+          ],
+        },
+        { model: Estado, as: "estado" },
+        { model: Bodega, as: "bodega" },
+        {
+          model: DetalleVenta,
+          as: "detallesVenta",
+          include: [{ model: Producto, as: "producto" }],
+        },
+        {
+          model: VentaHasFormaPago,
+          as: "formasPagoVenta",
+          include: [{ model: FormaPago, as: "formaPago" }],
+        },
+      ],
+      order: [["fechaVenta", "DESC"]],
+    });
+
+    res.status(200).json({ success: ventas.length > 0, data: ventas });
+  } catch (error) {
+    res.status(500).json(
+      await errorAndLogHandler({
+        level: errorLevels.error,
+        message: `Error obteniendo ventas del cliente ${clienteId}: ${(error as Error).message}`,
+        error,
+        userId: req.user?.id || 0,
+        genericId: clienteId,
+      })
+    );
+  }
+};
+
+const getByDateRange = async (req: Request, res: Response) => {
+  const { fechaInicio, fechaFin } = req.query;
+  
+  try {
+    if (!fechaInicio || !fechaFin) {
+      return res.status(400).json(
+        await errorAndLogHandler({
+          level: errorLevels.warn,
+          message: "Las fechas de inicio y fin son requeridas",
+          userId: req.user?.id || 0,
+        })
+      );
+    }
+
+    const ventas = await Venta.findAll({
+      where: {
+        fechaVenta: {
+          [Op.between]: [new Date(fechaInicio as string), new Date(fechaFin as string)]
+        }
+      },
+      include: [
+        {
+          model: Cliente,
+          as: "cliente",
+          include: [
+            { model: Entidad, as: "entidad" },
+            { model: TipoCliente, as: "tipoCliente" },
+          ],
+        },
+        { model: Estado, as: "estado" },
+        { model: Bodega, as: "bodega" },
+        {
+          model: DetalleVenta,
+          as: "detallesVenta",
+          include: [{ model: Producto, as: "producto" }],
+        },
+      ],
+      order: [["fechaVenta", "DESC"]],
+    });
+
+    res.status(200).json({ success: ventas.length > 0, data: ventas });
+  } catch (error) {
+    res.status(500).json(
+      await errorAndLogHandler({
+        level: errorLevels.error,
+        message: `Error obteniendo ventas por rango de fechas: ${(error as Error).message}`,
+        error,
+        userId: req.user?.id || 0,
+      })
+    );
+  }
+};
+
+const getEstadisticas = async (req: Request, res: Response) => {
+  try {
+    const estadisticas = await sequelize.query(`
+      SELECT 
+        COUNT(*) as totalVentas,
+        SUM(totalVenta) as montoTotal,
+        AVG(totalVenta) as montoPromedio,
+        MAX(totalVenta) as montoMaximo,
+        MIN(totalVenta) as montoMinimo,
+        DATE(fechaVenta) as fecha
+      FROM Venta 
+      WHERE fechaVenta >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+      GROUP BY DATE(fechaVenta)
+      ORDER BY fecha DESC
+    `, {
+      type: QueryTypes.SELECT
+    });
+
+    res.status(200).json({ success: true, data: estadisticas });
+  } catch (error) {
+    res.status(500).json(
+      await errorAndLogHandler({
+        level: errorLevels.error,
+        message: `Error obteniendo estadísticas de ventas: ${(error as Error).message}`,
+        error,
+        userId: req.user?.id || 0,
+      })
+    );
+  }
+};
+
 export const VentaController = {
   create,
   getAll,
   getByID,
   update,
   partialUpdate,
+  cancelar,
+  getByCliente,
+  getByDateRange,
+  getEstadisticas,
 };

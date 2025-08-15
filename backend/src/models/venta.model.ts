@@ -1,6 +1,7 @@
 import { DataTypes, Model } from "sequelize";
 import sequelize from "../config/sequelize.js";
 import { VentaAttributes, VentaCreationAttributes } from "../schemas/venta.schema.js";
+import { DetalleVentaAttributes } from "../schemas/detalleVenta.schema.js";
 
 class Venta
   extends Model<VentaAttributes, VentaCreationAttributes>
@@ -13,6 +14,7 @@ class Venta
   declare totalVenta: number;
   declare numeroDocumentoVenta?: string | null;
   declare serieDocumentoVenta?: string | null;
+  declare detalleVenta: DetalleVentaAttributes[];
   declare generaIVA: boolean;
   declare estadoId: number;
   declare readonly createdAt: Date;
@@ -56,6 +58,11 @@ Venta.init(
       type: DataTypes.STRING,
       allowNull: true,
       field: "SerieDocumentoVenta",
+    },
+    detalleVenta: {
+      type: DataTypes.JSON,
+      allowNull: false,
+      field: "DetalleVenta",
     },
     generaIVA: {
       type: DataTypes.BOOLEAN,
