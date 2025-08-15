@@ -31,21 +31,20 @@ const create = async (req: Request, res: Response) => {
     // 2️⃣ Crear los Detalles de Venta si se proporcionaron
     if (detallesVenta && Array.isArray(detallesVenta)) {
       // Verificar existencias antes de crear los detalles
-      for (const detalle of detallesVenta) {
+      for (const detalle of detallesVenta as DetalleVenta[]) {
         const producto = await Producto.findByPk(detalle.productoId);
         if (!producto) {
           throw new Error(`Producto con ID ${detalle.productoId} no encontrado`);
         }
         if (producto.totalExistenciaProducto < detalle.cantidadVenta) {
-          throw new Error(`Stock insuficiente para el producto ${producto.descripcionProducto}. Disponible: ${producto.totalExistenciaProducto}, Solicitado: ${detalle.cantidadVenta}`);
+          throw new Error(`Stock insuficiente para el producto ${producto.descripcionProducto}. Disponible: ${producto.totalExistenciaProducto}, Solicitado: ${detalle.productoId}`);
         }
       }
 
-      const detallesConVentaId = detallesVenta.map((detalle: any) => ({
-        ...detalle,
-        ventaId: nuevaVenta.id,
-      }));
-      await DetalleVenta.bulkCreate(detallesConVentaId, { transaction: t });
+      for (const detalle of detallesVenta) {
+        detalle.ventaId = nuevaVenta.id;
+      }
+      await DetalleVenta.bulkCreate(detallesVenta, { transaction: t });
 
       // Reducir existencias de productos
       for (const detalle of detallesVenta) {
@@ -305,57 +304,15 @@ const update = async (req: Request, res: Response) => {
       include: [
         { model: Cliente, as: "cliente", include: [{ model: Entidad, as: "entidad" }, { model: TipoCliente, as: "tipoCliente" }] },
         { model: Estado, as: "estado" },
-        { model: DetalleVenta, as: "detallesVenta" },
-        { model: VentaHasFormaPago, as: "formasPagoVenta" },
+        { model: DetalleVenta, as: "detallesVenta", include: [{ model: Producto, as: "producto" }] },
+        { model: VentaHasFormaPago, as: "formasPagoVenta", include: [{ model: FormaPago, as: "formaPago" }] },
       ],
     });
 
     res.status(200).json(
       await errorAndLogHandler({
         level: errorLevels.info,
-        message: `Venta actualizada parcialmente: ${JSON.stringify(updatedVenta?.dataValues).replace(/"/g, "'")}`,
-        userId,
-        genericId: id,
-      })
-    );
-  } catch (error) {
-    await t.rollback();
-    res.status(400).json(
-      await errorAndLogHandler({
-        level: errorLevels.error,
-        message: `Error actualizando venta parcialmente: ${id} - ${(error as Error).message}`,
-        error,
-        userId,
-        genericId: id,
-      })
-    );
-  }
-};
-
-export const VentaController = {
-  create,
-  getAll,
-  getByID,
-  update,
-  partialUpdate,
-};VentaId, { transaction: t });
-    }
-
-    await t.commit();
-
-    const updatedVenta = await Venta.findByPk(id, {
-      include: [
-        { model: Cliente, as: "cliente", include: [{ model: Entidad, as: "entidad" }, { model: TipoCliente, as: "tipoCliente" }] },
-        { model: Estado, as: "estado" },
-        { model: DetalleVenta, as: "detallesVenta" },
-        { model: VentaHasFormaPago, as: "formasPagoVenta" },
-      ],
-    });
-
-    res.status(200).json(
-      await errorAndLogHandler({
-        level: errorLevels.info,
-        message: `Venta actualizada ${JSON.stringify(updatedVenta?.dataValues).replace(/"/g, "'")}`,
+        message: `Venta actualizada: ${JSON.stringify(updatedVenta?.dataValues).replace(/"/g, "'")}`,
         userId,
         genericId: id,
       })
@@ -398,8 +355,9 @@ const partialUpdate = async (req: Request, res: Response) => {
       }
     }
 
-    // Manejar detalles y formas de pago como en update si se proporcionan
+    // Manejar detalles si se proporcionan
     if (detallesVenta && Array.isArray(detallesVenta)) {
+      // Restaurar existencias de detalles antiguos
       const detallesAntiguos = await DetalleVenta.findAll({ where: { ventaId: id } });
       for (const detalle of detallesAntiguos) {
         await Producto.increment('totalExistenciaProducto', {
@@ -409,8 +367,10 @@ const partialUpdate = async (req: Request, res: Response) => {
         });
       }
 
+      // Eliminar detalles antiguos
       await DetalleVenta.destroy({ where: { ventaId: id }, transaction: t });
 
+      // Verificar existencias para los nuevos detalles
       for (const detalle of detallesVenta) {
         const producto = await Producto.findByPk(detalle.productoId);
         if (!producto) {
@@ -421,12 +381,14 @@ const partialUpdate = async (req: Request, res: Response) => {
         }
       }
 
+      // Crear nuevos detalles
       const detallesConVentaId = detallesVenta.map((detalle: any) => ({
         ...detalle,
         ventaId: id,
       }));
       await DetalleVenta.bulkCreate(detallesConVentaId, { transaction: t });
 
+      // Reducir existencias con los nuevos detalles
       for (const detalle of detallesVenta) {
         await Producto.decrement('totalExistenciaProducto', {
           by: detalle.cantidadVenta,
@@ -436,10 +398,53 @@ const partialUpdate = async (req: Request, res: Response) => {
       }
     }
 
+    // Manejar formas de pago si se proporcionan
     if (formasPago && Array.isArray(formasPago)) {
       await VentaHasFormaPago.destroy({ where: { ventaId: id }, transaction: t });
       const formasPagoConVentaId = formasPago.map((forma: any) => ({
         ...forma,
         ventaId: id,
       }));
-      await VentaHasFormaPago.bulkCreate(formasPagoCon
+      await VentaHasFormaPago.bulkCreate(formasPagoConVentaId, { transaction: t });
+    }
+
+    await t.commit();
+
+    const updatedVenta = await Venta.findByPk(id, {
+      include: [
+        { model: Cliente, as: "cliente", include: [{ model: Entidad, as: "entidad" }, { model: TipoCliente, as: "tipoCliente" }] },
+        { model: Estado, as: "estado" },
+        { model: DetalleVenta, as: "detallesVenta", include: [{ model: Producto, as: "producto" }] },
+        { model: VentaHasFormaPago, as: "formasPagoVenta", include: [{ model: FormaPago, as: "formaPago" }] },
+      ],
+    });
+
+    res.status(200).json(
+      await errorAndLogHandler({
+        level: errorLevels.info,
+        message: `Venta actualizada parcialmente: ${JSON.stringify(updatedVenta?.dataValues).replace(/"/g, "'")}`,
+        userId,
+        genericId: id,
+      })
+    );
+  } catch (error) {
+    await t.rollback();
+    res.status(400).json(
+      await errorAndLogHandler({
+        level: errorLevels.error,
+        message: `Error actualizando venta parcialmente: ${id} - ${(error as Error).message}`,
+        error,
+        userId,
+        genericId: id,
+      })
+    );
+  }
+};
+
+export const VentaController = {
+  create,
+  getAll,
+  getByID,
+  update,
+  partialUpdate,
+};
